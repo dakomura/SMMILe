@@ -133,6 +133,9 @@ This project is licensed under the GPLv3 License and is available for non-commer
 
 We acknowledge funding and support from Cancer Research UK and the Cancer Research UK Cambridge Centre [CTRQQR-2021-100012], The Mark Foundation for Cancer Research [RG95043], GE HealthCare, and the CRUK National Cancer Imaging Translational Accelerator (NCITA) [A27066]. Additional support was also provided by the National Institute of Health Research (NIHR) Cambridge Biomedical Research Centre [NIHR203312] and EPSRC Tier-2 capital grant [EP/P020259/1]. Calculations were performed in part using the Sulis Tier 2 HPC platform hosted by the Scientific Computing Research Technology Platform at the University of Warwick. Sulis is funded by EPSRC Grant EP/T022108/1 and the HPC Midlands+ consortium. The funders had no role in study design, data collection and analysis, decision to publish, or preparation of the manuscript.
 
+We gratefully acknowledge the [CLAM](https://github.com/mahmoodlab/CLAM) repository by Mahmood Lab, upon which the **SMMILe** framework was developed.  
+Their open-source contribution provided an essential foundation for our work.
+
 # Citation
 
 If you find any useful, please cite our paper.
