@@ -1,6 +1,9 @@
 SMMILe <img src="SmmileIcon.jpg" width="140px" align="right" />
 ===========
-## Accurate spatial quantification in computational pathology with multiple instance learning.
+**Nature Cancer**
+
+[Journal link](https://www.nature.com/articles/s43018-025-01060-8) • [Citation link](#citation)
+## SMMILe enables accurate spatial quantification in digital pathology using multiple-instance learning.
 ![Graphic](SMMILe-graphical-abstract.png)
 ## Framework
 ![Graphic](SMMILeGraphic.png)
@@ -140,16 +143,19 @@ Their open-source contribution provided an essential foundation for our work.
 
 If you find any useful, please cite our paper.
 
-Gao Z, Mao A, Dong Y, et al. Accurate spatial quantification in computational pathology with multiple instance learning[J]. medRxiv, 2024: 2024.04. 25.24306364.s
+Cite this article  
+Gao, Z., Mao, A., Dong, Y., Clayton, H., Wu, J., Liu, J., Wang, C., He, K., Gong, T., Li, C. & Crispin-Ortuzar, M.  
+*SMMILe enables accurate spatial quantification in digital pathology using multiple-instance learning.*  
+**Nat Cancer** (2025).  
+https://doi.org/10.1038/s43018-025-01060-8
 
 ```
-@article {Gao2024,
-  title={Accurate spatial quantification in computational pathology with multiple instance learning},
-  author={Gao, Zeyu and Mao, Anyu and Dong, Yuxing and Wu, Jialun and Liu, Jiashuai and Wang, Chunbao and He, Kai and Gong, Tieliang and Li, Chen and Crispin-Ortuzar, Mireia},
-	year = {2024},
-	doi = {10.1101/2024.04.25.24306364},
-	publisher = {Cold Spring Harbor Laboratory Press},
-	URL = {https://www.medrxiv.org/content/early/2024/04/26/2024.04.25.24306364},
-	journal = {medRxiv}
+@article{Gao2025SMMILe,
+  title        = {SMMILe enables accurate spatial quantification in digital pathology using multiple-instance learning},
+  author       = {Gao, Zeyu and Mao, Anyu and Dong, Yuxing and Clayton, Hannah and Wu, Jialun and Liu, Jiashuai and Wang, ChunBao and He, Kai and Gong, Tieliang and Li, Chen and Crispin-Ortuzar, Mireia},
+  journal      = {Nature Cancer},
+  year         = {2025},
+  doi          = {10.1038/s43018-025-01060-8},
+  url          = {https://www.nature.com/articles/s43018-025-01060-8}
 }
 ```
