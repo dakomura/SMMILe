@@ -14,6 +14,84 @@ import h5py
 
 from utils.utils import generate_split, nth
 
+
+def load_features_and_coords_h5(h5_path):
+    """
+    h5ファイル（trident形式）から特徴量と座標を読み込む
+    座標はターゲット倍率座標に変換される
+    
+    Args:
+        h5_path: h5ファイルのパス
+        
+    Returns:
+        features: (N, D) tensor
+        coords_nd: (N, 2) ndarray - ターゲット倍率での座標
+        inst_label: list (all -1, meaning no annotation)
+        patch_size: ターゲット倍率でのパッチサイズ
+    """
+    with h5py.File(h5_path, 'r') as f:
+        features = torch.from_numpy(f['features'][:])
+        coords_level0 = f['coords'][:]
+        
+        # 属性から倍率情報を取得
+        if 'coords' in f and hasattr(f['coords'], 'attrs'):
+            attrs = dict(f['coords'].attrs)
+            patch_size = attrs.get('patch_size', 512)
+            level0_mag = attrs.get('level0_magnification', 40)
+            target_mag = attrs.get('target_magnification', 20)
+        else:
+            patch_size = 512
+            level0_mag = 20
+            target_mag = 20
+        
+        # 座標をターゲット倍率座標に変換
+        scale_factor = target_mag / level0_mag
+        coords_nd = (coords_level0 * scale_factor).astype(np.int64)
+    
+    # h5形式にはinst_labelがないので、全て-1（アノテーションなし）を設定
+    inst_label = [-1 for _ in range(coords_nd.shape[0])]
+    
+    return features, coords_nd, inst_label, patch_size
+
+
+def load_features_and_coords_npy(npy_path, feature_key='feature'):
+    """
+    npyファイル（SMMILe元形式）から特徴量と座標を読み込む
+    
+    Args:
+        npy_path: npyファイルのパス
+        feature_key: 特徴量のキー名
+        
+    Returns:
+        features: (N, D) tensor
+        coords_nd: (N, 2) ndarray
+        inst_label: list
+    """
+    record = np.load(npy_path, allow_pickle=True)
+    
+    if feature_key in record[()].keys():
+        features = record[()][feature_key]
+    elif 'feature' in record[()].keys():
+        features = record[()]['feature']
+    else:
+        features = record[()]['feature2']
+    
+    if type(features) is not torch.Tensor:
+        features = torch.from_numpy(features)
+    
+    coords = record[()]['index']
+    if type(coords[0]) is np.ndarray:
+        coords_nd = np.array(coords)
+    else:
+        coords_nd = np.array([[int(i.split('_')[0]), int(i.split('_')[1])] for i in coords])
+    
+    inst_label = record[()].get('inst_label', [-1] * coords_nd.shape[0])
+    if inst_label is None:
+        inst_label = [-1] * coords_nd.shape[0]
+    
+    return features, coords_nd, inst_label
+
+
 def save_splits(split_datasets, column_keys, filename, boolean_style=False):
     splits = [split_datasets[i].slide_data['slide_id'] for i in range(len(split_datasets))]
     if not boolean_style:
@@ -361,7 +439,7 @@ class Generic_MIL_SP_Dataset(Generic_WSI_Classification_Dataset):
         features_nic = torch.ones((features.shape[-1], image_shape[0], image_shape[1])) * np.nan
         coords_nic = -np.ones((image_shape[0], image_shape[1], 2))
         # Store each patch feature in the right position
-        if inst_label != []:
+        if inst_label != [] and inst_label is not None and not all(x == -1 for x in inst_label):
             for patch_feature, x, y, label in zip(features, w, h, inst_label):
                 coord = [x,y]
                 x_nic, y_nic = (x-w_min)//size, (y-h_min)//size
@@ -382,37 +460,56 @@ class Generic_MIL_SP_Dataset(Generic_WSI_Classification_Dataset):
         
         return features_nic, mask, labels, coords_nic
 
+    def _get_feature_path(self, slide_id):
+        """
+        特徴量ファイルのパスを取得（h5とnpyの両方をサポート）
+        """
+        # まずh5ファイルを探す
+        h5_path = os.path.join(self.data_dir, '{}_{}.h5'.format(slide_id, self.data_mag))
+        if os.path.exists(h5_path):
+            return h5_path
+        
+        # h5がなければnpyファイルを探す
+        npy_path = os.path.join(self.data_dir, '{}_{}.npy'.format(slide_id, self.data_mag))
+        if os.path.exists(npy_path):
+            return npy_path
+        
+        # どちらも見つからない場合はnpyパスを返す（エラーは後で発生）
+        return npy_path
+
+    def _get_sp_path(self, slide_id):
+        """
+        スーパーピクセルファイルのパスを取得
+        """
+        return os.path.join(self.sp_dir, '{}_{}.npy'.format(slide_id, self.data_mag))
     
     def __getitem__(self, idx):
         slide_id = self.slide_data['slide_id'][idx]
         label = self.slide_data['label'][idx]
         data_dir = self.data_dir
 
-        full_path = os.path.join(data_dir,'{}_{}.npy'.format(slide_id, self.data_mag))
-        sp_path = os.path.join(self.sp_dir, '{}_{}.npy'.format(slide_id, self.data_mag))
+        # 特徴量ファイルのパスを取得
+        full_path = self._get_feature_path(slide_id)
+        sp_path = self._get_sp_path(slide_id)
         
-        record = np.load(full_path, allow_pickle=True)
+        # ファイル拡張子で処理を分岐
+        file_ext = os.path.splitext(full_path)[1].lower()
+        
+        if file_ext == '.h5':
+            # h5形式（trident出力）
+            features, coords_nd, inst_label, patch_size = load_features_and_coords_h5(full_path)
+            # h5の場合、sizeはh5から取得したpatch_sizeを使用
+            size_to_use = patch_size
+        else:
+            # npy形式（SMMILe元形式）
+            features, coords_nd, inst_label = load_features_and_coords_npy(full_path)
+            size_to_use = self.size
+        
+        # スーパーピクセルファイルを読み込み
         sp_record = np.load(sp_path, allow_pickle=True)
-        
         sp = sp_record[()]['m_slic']
         adj = sp_record[()]['m_adj']
         sp = sp.transpose(1,0)
-        
-        if 'feature' in record[()].keys():
-            features = record[()]['feature']
-        else:
-            features = record[()]['feature2']
-
-        if type(features) is not torch.Tensor:
-            features = torch.from_numpy(features)
-        
-        coords = record[()]['index']
-        if type(coords[0]) is np.ndarray:
-            coords_nd = np.array(coords)
-        else:
-            coords_nd = np.array([[int(i.split('_')[0]),int(i.split('_')[1])] for i in coords])
-        
-        inst_label = record[()]['inst_label']
         
         inst_label = np.array(inst_label)
         
@@ -428,7 +525,7 @@ class Generic_MIL_SP_Dataset(Generic_WSI_Classification_Dataset):
             inst_label = []
 
         features_nic, mask, inst_label_nic_nd, coords_nic = \
-            self.get_nic_with_coord(features, coords_nd, self.size, inst_label)
+            self.get_nic_with_coord(features, coords_nd, size_to_use, inst_label)
         
         if isinstance(inst_label_nic_nd, list):
             inst_label_nic = inst_label_nic_nd
