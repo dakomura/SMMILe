@@ -105,7 +105,12 @@ parser.add_argument('--model_type', type=str, choices=['ramil','smmile','smmile_
 parser.add_argument('--exp_code', type=str, help='experiment code for saving results')
 parser.add_argument('--weighted_sample', action='store_true', default=False, help='enable weighted sampling')
 parser.add_argument('--model_size', type=str, choices=['small', 'big'], default='small', help='size of model')
-parser.add_argument('--task', type=str, choices=['camelyon','renal_subtype','renal_subtype_yfy','lung_subtype','ovarian_subtype'])
+parser.add_argument('--task', type=str, default='custom',
+                    help='task name (use any name for custom datasets)')
+parser.add_argument('--csv_path', type=str, default=None,
+                    help='path to the CSV file containing slide_id, case_id, and label columns')
+parser.add_argument('--label_dict', type=dict, default=None,
+                    help='dictionary mapping label names to integers (set in YAML config)')
 parser.add_argument('--fea_dim', type=int, default=1024,
                      help='the original dimensions of patch embedding')
 parser.add_argument('--models_dir', type=str, default=None,
@@ -204,77 +209,58 @@ print(settings)
 
 print('\nLoad Dataset')
 
-if args.task == 'camelyon':
-    dataset = NIC_MIL_SP_Dataset(csv_path = 'dataset_csv/camelyon_npy.csv',
-                        data_dir = os.path.join(args.data_root_dir),
-                        data_mag = args.data_mag,
-                        sp_dir = os.path.join(args.data_sp_dir),
-                        task = args.task,
-                        size = args.patch_size,
-                        shuffle = False, 
-                        seed = 10, 
-                        print_info = True,
-                        label_dict = {'normal':0, 'tumor':1},
-                        patient_strat= False,
-                        ignore=[])
-    
-elif args.task == 'renal_subtype':
-    dataset = NIC_MIL_SP_Dataset(csv_path = 'dataset_csv/renal_subtyping_npy.csv',
-                        data_dir = os.path.join(args.data_root_dir),
-                        data_mag = args.data_mag,
-                        sp_dir = os.path.join(args.data_sp_dir),
-                        task = args.task,
-                        size = args.patch_size,
-                        shuffle = False, 
-                        seed = 10, 
-                        print_info = True,
-                        label_dict = {'ccrcc':0, 'prcc':1, 'chrcc':2},
-                        patient_strat= False,
-                        ignore=[])
-    
-elif args.task == 'renal_subtype_yfy':
-    dataset = NIC_MIL_SP_Dataset(csv_path = 'dataset_csv/renal_subtyping_yfy_npy.csv',
-                        data_dir = os.path.join(args.data_root_dir),
-                        data_mag = args.data_mag,
-                        sp_dir = os.path.join(args.data_sp_dir),
-                        task = args.task,
-                        size = args.patch_size,
-                        shuffle = False, 
-                        seed = 10, 
-                        print_info = True,
-                        label_dict = {'ccrcc':0, 'prcc':1, 'chrcc':2, 'rocy':3},
-                        patient_strat= False,
-                        ignore=[])
-            
-elif args.task == 'lung_subtype':
-    dataset = NIC_MIL_SP_Dataset(csv_path = 'dataset_csv/lung_subtyping_npy.csv',
-                        data_dir = os.path.join(args.data_root_dir),
-                        data_mag = args.data_mag,
-                        sp_dir = os.path.join(args.data_sp_dir),
-                        task = args.task,
-                        size = args.patch_size,
-                        shuffle = False, 
-                        seed = 10, 
-                        print_info = True,
-                        label_dict = {'luad':0, 'lusc':1},
-                        patient_strat= False,
-                        ignore=[])
-    
-elif args.task == 'ovarian_subtype':
-    dataset = NIC_MIL_SP_Dataset(csv_path = 'dataset_csv/ovarian_subtyping_npy.csv',
-                        data_dir = os.path.join(args.data_root_dir),
-                        data_mag = args.data_mag,
-                        sp_dir = os.path.join(args.data_sp_dir),
-                        task = args.task,
-                        size = args.patch_size,
-                        shuffle = False, 
-                        seed = 10, 
-                        print_info = True,
-                        label_dict = {'HGSC':0, 'EC':1, 'CC':2, 'LGSC':3, 'MC':4},
-                        patient_strat= False,
-                        ignore=[])
+# YAMLファイルからcsv_pathとlabel_dictを読み込み（独自データセット対応）
+if hasattr(args, 'csv_path') and args.csv_path is not None:
+    # YAMLでcsv_pathが指定されている場合はそれを使用
+    csv_path = args.csv_path
+    label_dict = args.label_dict
+    print(f"Using custom dataset: {csv_path}")
+    print(f"Label dict: {label_dict}")
 else:
-    raise NotImplementedError
+    # 後方互換性: taskに基づいてcsv_pathとlabel_dictを設定
+    task_configs = {
+        'camelyon': {
+            'csv_path': 'dataset_csv/camelyon_npy.csv',
+            'label_dict': {'normal': 0, 'tumor': 1}
+        },
+        'renal_subtype': {
+            'csv_path': 'dataset_csv/renal_subtyping_npy.csv',
+            'label_dict': {'ccrcc': 0, 'prcc': 1, 'chrcc': 2}
+        },
+        'renal_subtype_yfy': {
+            'csv_path': 'dataset_csv/renal_subtyping_yfy_npy.csv',
+            'label_dict': {'ccrcc': 0, 'prcc': 1, 'chrcc': 2, 'rocy': 3}
+        },
+        'lung_subtype': {
+            'csv_path': 'dataset_csv/lung_subtyping_npy.csv',
+            'label_dict': {'luad': 0, 'lusc': 1}
+        },
+        'ovarian_subtype': {
+            'csv_path': 'dataset_csv/ovarian_subtyping_npy.csv',
+            'label_dict': {'HGSC': 0, 'EC': 1, 'CC': 2, 'LGSC': 3, 'MC': 4}
+        }
+    }
+    
+    if args.task in task_configs:
+        csv_path = task_configs[args.task]['csv_path']
+        label_dict = task_configs[args.task]['label_dict']
+    else:
+        raise ValueError(f"Unknown task: {args.task}. Please specify 'csv_path' and 'label_dict' in your YAML config file.")
+
+dataset = NIC_MIL_SP_Dataset(
+    csv_path=csv_path,
+    data_dir=os.path.join(args.data_root_dir),
+    data_mag=args.data_mag,
+    sp_dir=os.path.join(args.data_sp_dir),
+    task=args.task,
+    size=args.patch_size,
+    shuffle=False,
+    seed=10,
+    print_info=True,
+    label_dict=label_dict,
+    patient_strat=False,
+    ignore=[]
+)
     
 if not os.path.isdir(args.results_dir):
     os.mkdir(args.results_dir)

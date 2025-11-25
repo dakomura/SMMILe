@@ -1,0 +1,126 @@
+# ============================================
+# 独自データセット用 SMMILe設定テンプレート
+# ============================================
+# 使い方:
+#   1. このファイルをコピーして、プロジェクトに合わせてリネーム
+#   2. 以下の設定を自分のデータセットに合わせて編集
+#   3. 実行: python main.py --config configs_custom/your_config.yaml
+
+# ============================================
+# データセット設定 (★必ず編集してください)
+# ============================================
+
+# クラス数
+n_classes: 2
+
+# タスク名（任意の名前でOK、ログやファイル名に使用）
+task: 'my_custom_task'
+
+# CSVファイルのパス
+# CSVは以下の3カラムが必要: case_id, slide_id, label
+csv_path: 'dataset_csv/your_dataset.csv'
+
+# ラベルの定義（文字列ラベル → 数値への対応）
+# CSVファイルのlabel列に含まれる値を数値にマッピング
+label_dict:
+  class_name_1: 0
+  class_name_2: 1
+  # class_name_3: 2  # 必要に応じて追加
+
+# ============================================
+# パス設定 (★必ず編集してください)
+# ============================================
+
+# パッチ埋め込み（特徴量）のディレクトリ
+# .npyまたは.h5ファイルが格納されているパス
+data_root_dir: '/path/to/your/features/'
+
+# スーパーピクセルセグメンテーションマップのディレクトリ
+data_sp_dir: '/path/to/your/superpixels/'
+
+# 特徴量ファイルの命名規則
+# ファイル名: {slide_id}_{data_mag}.npy または {slide_id}_{data_mag}.h5
+data_mag: '1_512'
+
+# パッチサイズ（特徴量抽出時のサイズ）
+patch_size: 512
+
+# 特徴量の次元数
+# ResNet: 1024, CONCH: 512, など
+fea_dim: 1024
+
+# ============================================
+# 出力・実験設定
+# ============================================
+
+# 結果の保存先ディレクトリ
+results_dir: './results_custom/'
+
+# 実験コード（結果ファイル名に使用）
+exp_code: 'my_experiment_v1'
+
+# 事前学習済みモデルのパス（インスタンスリファインメント2段階目の場合）
+models_dir: null
+
+# ============================================
+# 学習設定
+# ============================================
+
+# ランダムシード（再現性のため）
+seed: 1
+
+# 交差検証の設定
+k: 5           # fold数
+k_start: 0     # 開始fold
+k_end: 5       # 終了fold
+label_frac: 0.8  # ラベル使用率
+
+# エポック数
+max_epochs: 50
+
+# 学習率・正則化
+lr: 0.0001
+reg: 0.00001
+
+# 最適化
+opt: 'adam'
+bag_loss: 'bce'    # 'ce' または 'bce'
+
+# その他
+early_stopping: true
+drop_out: true
+drop_rate: 0.25
+weighted_sample: true
+log_data: true
+testing: false
+reverse_train_val: false
+
+# ============================================
+# モデル設定
+# ============================================
+
+model_type: 'smmile'    # 'smmile' or 'smmile_single'
+model_size: 'small'     # 'small' or 'big'
+
+# Attention Consistency（negative bagのみ）
+consistency: false
+
+# Instance Drop Out
+drop_with_score: false
+D: 10                   # ドロップアウト回数
+
+# Instance Sampling（スーパーピクセルベース）
+superpixel: false
+G: 10                   # サンプリング回数
+sp_smooth: true
+
+# Instance Refinement
+inst_refinement: false
+inst_rate: 0.1          # pseudo label生成時のインスタンス率
+n_refs: 3               # リファインメントネットワークの層数
+ref_start_epoch: 0      # インスタンスリファインメント開始エポック
+
+# MRF制約（Instance Refinement用）
+mrf: false
+tau: 0.1                # MRF制約の重み
+
