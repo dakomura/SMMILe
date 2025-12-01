@@ -15,6 +15,32 @@ import h5py
 from utils.utils import generate_split, nth
 
 
+def calc_patch_size_from_data_mag(data_mag):
+    """
+    data_magからpatch_sizeを自動計算する
+    
+    Args:
+        data_mag: 形式 "{level}_{size}" (例: "0_512", "1_512")
+        
+    Returns:
+        patch_size: WSI上での実際のパッチサイズ（ピクセル）
+        
+    計算式: patch_size = size × (2 ^ level)
+    例:
+        "0_512" -> 512 × 2^0 = 512
+        "1_512" -> 512 × 2^1 = 1024
+        "2_512" -> 512 × 2^2 = 2048
+    """
+    try:
+        parts = data_mag.split('_')
+        level = int(parts[0])
+        size = int(parts[1])
+        patch_size = size * (2 ** level)
+        return patch_size
+    except (ValueError, IndexError) as e:
+        raise ValueError(f"Invalid data_mag format: '{data_mag}'. Expected format: 'level_size' (e.g., '0_512', '1_512')")
+
+
 def load_features_and_coords_h5(h5_path):
     """
     h5ファイル（trident形式）から特徴量と座標を読み込む
@@ -462,35 +488,53 @@ class Generic_MIL_SP_Dataset(Generic_WSI_Classification_Dataset):
 
     def _get_feature_path(self, slide_id):
         """
-        特徴量ファイルのパスを取得（h5とnpyの両方をサポート）
+        特徴量ファイルのパスを取得（h5とnpyの両方をサポート、複数のdata_magを試行）
+        
+        Returns:
+            tuple: (ファイルパス, 実際に見つかったdata_mag)
         """
-        # まずh5ファイルを探す
-        h5_path = os.path.join(self.data_dir, '{}_{}.h5'.format(slide_id, self.data_mag))
-        if os.path.exists(h5_path):
-            return h5_path
+        # 試行するdata_magのリスト（設定値を優先）
+        data_mags_to_try = [self.data_mag]
+        # 代替のdata_magを追加（40x/20xの両方をサポート）
+        if self.data_mag == '1_512':
+            data_mags_to_try.append('0_512')
+        elif self.data_mag == '0_512':
+            data_mags_to_try.append('1_512')
         
-        # h5がなければnpyファイルを探す
-        npy_path = os.path.join(self.data_dir, '{}_{}.npy'.format(slide_id, self.data_mag))
-        if os.path.exists(npy_path):
-            return npy_path
+        for data_mag in data_mags_to_try:
+            # まずh5ファイルを探す
+            h5_path = os.path.join(self.data_dir, '{}_{}.h5'.format(slide_id, data_mag))
+            if os.path.exists(h5_path):
+                return h5_path, data_mag
+            
+            # h5がなければnpyファイルを探す
+            npy_path = os.path.join(self.data_dir, '{}_{}.npy'.format(slide_id, data_mag))
+            if os.path.exists(npy_path):
+                return npy_path, data_mag
         
-        # どちらも見つからない場合はnpyパスを返す（エラーは後で発生）
-        return npy_path
+        # どちらも見つからない場合は元のdata_magでnpyパスを返す（エラーは後で発生）
+        return os.path.join(self.data_dir, '{}_{}.npy'.format(slide_id, self.data_mag)), self.data_mag
 
-    def _get_sp_path(self, slide_id):
+    def _get_sp_path(self, slide_id, data_mag=None):
         """
         スーパーピクセルファイルのパスを取得
+        
+        Args:
+            slide_id: スライドID
+            data_mag: data_mag（Noneの場合はself.data_magを使用）
         """
-        return os.path.join(self.sp_dir, '{}_{}.npy'.format(slide_id, self.data_mag))
+        if data_mag is None:
+            data_mag = self.data_mag
+        return os.path.join(self.sp_dir, '{}_{}.npy'.format(slide_id, data_mag))
     
     def __getitem__(self, idx):
         slide_id = self.slide_data['slide_id'][idx]
         label = self.slide_data['label'][idx]
         data_dir = self.data_dir
 
-        # 特徴量ファイルのパスを取得
-        full_path = self._get_feature_path(slide_id)
-        sp_path = self._get_sp_path(slide_id)
+        # 特徴量ファイルのパスを取得（data_magも取得）
+        full_path, actual_data_mag = self._get_feature_path(slide_id)
+        sp_path = self._get_sp_path(slide_id, actual_data_mag)
         
         # ファイル拡張子で処理を分岐
         file_ext = os.path.splitext(full_path)[1].lower()
@@ -503,7 +547,8 @@ class Generic_MIL_SP_Dataset(Generic_WSI_Classification_Dataset):
         else:
             # npy形式（SMMILe元形式）
             features, coords_nd, inst_label = load_features_and_coords_npy(full_path)
-            size_to_use = self.size
+            # data_magからpatch_sizeを自動計算
+            size_to_use = calc_patch_size_from_data_mag(actual_data_mag)
         
         # スーパーピクセルファイルを読み込み
         sp_record = np.load(sp_path, allow_pickle=True)

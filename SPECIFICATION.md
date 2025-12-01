@@ -514,9 +514,159 @@ python tests/test_trident_integration.py --h5_path <FILE>
 
 ---
 
-## 6. 技術仕様
+## 6. Heatmap生成（Instance Prediction可視化）
 
-### 6.1 座標変換
+学習済みモデルを使用して、パッチレベルの予測確率をWSI上にオーバーレイしたheatmapを生成できます。
+
+### 6.1 概要
+
+1. `eval.py`でインスタンスレベルの予測結果（`*_inst.csv`）を生成
+2. `generate_heatmap.py`でWSI上にheatmapをオーバーレイ
+
+### 6.2 Step 1: Instance Predictionの実行
+
+```bash
+cd single
+python eval.py \
+  --data_root_dir /path/to/features/ \
+  --data_sp_dir /path/to/superpixels/ \
+  --results_dir /path/to/training/results/ \
+  --models_exp_code <experiment_code>_s1 \
+  --save_exp_code _heatmap \
+  --split test \
+  --k 5 \
+  --k_start 0 \
+  --k_end 5
+```
+
+#### 主要パラメータ
+
+| パラメータ | 説明 | 例 |
+|-----------|------|-----|
+| `--data_root_dir` | 特徴量ディレクトリ | `/path/to/features/` |
+| `--data_sp_dir` | スーパーピクセルディレクトリ | `/path/to/superpixels/` |
+| `--results_dir` | 学習結果のディレクトリ | `/path/to/results/` |
+| `--models_exp_code` | 実験コード（`_s1`付き） | `esca_subtyping_smmile_1512_5fold_s1` |
+| `--save_exp_code` | 保存用サフィックス | `_heatmap` |
+| `--split` | 対象データ | `train`, `val`, `test`, `all` |
+
+#### 出力ファイル
+
+`eval_results/EVAL_{models_exp_code}{save_exp_code}/`に以下が生成されます：
+- `fold_X.csv` - スライドレベルの予測結果
+- `smmile_inst_fold_X_inst.csv` - インスタンスレベルの予測結果
+
+`*_inst.csv`の形式：
+```csv
+filename,label,prob,pred,prob_0,prob_1
+TCGA-XXX/0_19456_2048.png,-1,0.0001,0,0.0001,0.00001
+```
+
+| カラム | 説明 |
+|-------|------|
+| `filename` | パッチの位置（`{slide_id}/{x}_{y}_{patch_size}.png`） |
+| `label` | インスタンスラベル（なければ-1） |
+| `prob` | 予測クラスの確率 |
+| `pred` | 予測ラベル |
+| `prob_X` | 各クラスの確率 |
+
+### 6.3 Step 2: Heatmap生成
+
+```bash
+cd /path/to/SMMILe
+python generate_heatmap.py \
+  --model_name smmile \
+  --wsi_dir "/path/to/wsi/*.svs" \
+  --results_dir ./single/eval_results/EVAL_{models_exp_code}{save_exp_code} \
+  --class_labels "0:class0_name,1:class1_name" \
+  --coord_scale 2.0 \
+  --num_workers 8
+```
+
+#### 主要パラメータ
+
+| パラメータ | 説明 | 例 |
+|-----------|------|-----|
+| `--model_name` | モデル名（ファイル名に使用） | `smmile` |
+| `--wsi_dir` | WSIファイルのパス（glob形式） | `"/data/wsi/*.svs"` |
+| `--results_dir` | `*_inst.csv`があるディレクトリ | `./eval_results/EVAL_xxx` |
+| `--class_labels` | クラスラベル | `"0:adenocarcinoma,1:squamous"` |
+| `--coord_scale` | 座標スケーリング係数 | `2.0` |
+| `--num_workers` | 並列処理ワーカー数 | `8` |
+
+#### coord_scaleについて
+
+CSVの座標がWSI Level 0座標と異なる場合にスケーリングが必要です。
+
+| データソース | 座標スケール | coord_scale |
+|-------------|-------------|-------------|
+| Level 0座標 | 1:1 | `1.0` |
+| Level 1相当 | 1:2 | `2.0` |
+| Level 2相当 | 1:4 | `4.0` |
+
+座標の確認方法：
+```python
+import pandas as pd
+import openslide
+
+# CSVの座標最大値
+df = pd.read_csv('*_inst.csv')
+print("Max X:", df['filename'].str.extract(r'/(\d+)_')[0].astype(int).max())
+print("Max Y:", df['filename'].str.extract(r'_(\d+)_\d+\.png')[0].astype(int).max())
+
+# WSIのサイズ
+slide = openslide.OpenSlide('slide.svs')
+print("WSI dimensions:", slide.level_dimensions[0])
+
+# ratio = WSI_size / CSV_max → coord_scale
+```
+
+### 6.4 出力ファイル
+
+`{results_dir}/visual/`に以下が生成されます：
+- `{slide_id}_{model_name}_{class_name}_heatmap.png`
+
+各クラスごとに別々のheatmapファイルが生成されます。
+
+### 6.5 実行例（ESCA）
+
+```bash
+# Step 1: テストデータのInstance Prediction
+cd /home/is1kd/work/SMMILe/single
+python eval.py \
+  --data_root_dir /home/is1kd/work/TITAN/TCGA/SMMILe/features/ \
+  --data_sp_dir /home/is1kd/work/TITAN/TCGA/SMMILe/superpixels_n16_c50_512 \
+  --results_dir /home/is1kd/work/TITAN/TCGA/SMMILe/ESCA/results/ \
+  --models_exp_code esca_subtyping_smmile_1512_5fold_s1 \
+  --save_exp_code _esca_test \
+  --split test \
+  --k 5 --k_start 0 --k_end 5
+
+# Step 2: Heatmap生成
+cd /home/is1kd/work/SMMILe
+python generate_heatmap.py \
+  --model_name smmile \
+  --wsi_dir "/home/is1kd/work/apply_paget/TCGA/ESCA/*.svs" \
+  --results_dir ./single/eval_results/EVAL_esca_subtyping_smmile_1512_5fold_s1_esca_test \
+  --class_labels "0:adenocarcinoma,1:squamous_cell_carcinoma" \
+  --coord_scale 2.0 \
+  --num_workers 8
+```
+
+### 6.6 splitオプションの使い分け
+
+| split | 説明 | 用途 |
+|-------|------|------|
+| `train` | 訓練データのみ | 学習データの確認 |
+| `val` | 検証データのみ | ハイパーパラメータ調整 |
+| `test` | テストデータのみ | 最終評価・可視化 |
+| `all` | 全データ | 全スライドの可視化 |
+
+---
+
+## 7. 技術仕様
+
+### 7.1 座標変換
 
 tridentの座標はWSI level 0座標で保存されています。スキャン倍率によって座標間隔が異なるため、読み込み時に変換が必要です。
 
@@ -553,7 +703,7 @@ def load_features_and_coords_h5(h5_path):
 20x scan: [2048, 9728]  → [2048, 9728] (step: 512 → 512)
 ```
 
-### 6.2 自動推定機能
+### 7.2 自動推定機能
 
 h5ファイルの属性から`patch_level`と`patch_size`を自動推定：
 
@@ -567,14 +717,14 @@ h5ファイルの属性から`patch_level`と`patch_size`を自動推定：
 patch_size = attrs.get('patch_size', 512)
 ```
 
-### 6.3 データ形式
+### 7.3 データ形式
 
 | 形式 | データ構造 | 座標系 |
 |-----|----------|-------|
 | trident (h5) | `features` (N, 768), `coords` (N, 2) | level 0座標 |
 | SMMILe (npy) | `feature`, `index` | ターゲット倍率座標 |
 
-### 6.4 ファイル命名規則
+### 7.4 ファイル命名規則
 
 | ソース | ファイル名 |
 |-------|----------|
@@ -583,9 +733,9 @@ patch_size = attrs.get('patch_size', 512)
 
 ---
 
-## 7. 開発者向け情報
+## 8. 開発者向け情報
 
-### 7.1 テストコード
+### 8.1 テストコード
 
 `tests/test_trident_integration.py` で統合テストを実行できます。
 
@@ -604,7 +754,7 @@ python tests/test_trident_integration.py --test_superpixel
 python tests/test_trident_integration.py --test_dataset
 ```
 
-### 7.2 テスト項目
+### 8.2 テスト項目
 
 1. **座標変換テスト**: 40x/20xスキャンでの座標変換が正しく行われるか
 2. **混在倍率テスト**: 40xと20xが混在しても統一された座標系になるか
@@ -612,7 +762,7 @@ python tests/test_trident_integration.py --test_dataset
 4. **superpixel生成テスト**: h5ファイルからsuperpixelが正しく生成されるか
 5. **データセット読み込みテスト**: h5形式のデータが正しく読み込めるか
 
-### 7.3 実装チェックリスト
+### 8.3 実装チェックリスト
 
 #### Phase 1: symlinkスクリプト ✅
 - [x] `create_smmile_structure.py`の作成
@@ -637,7 +787,7 @@ python tests/test_trident_integration.py --test_dataset
 - [x] superpixel生成テスト
 - [x] データセット読み込みテスト
 
-### 7.4 修正されたファイルの詳細
+### 8.4 修正されたファイルの詳細
 
 | ファイル | 状態 | 主な変更内容 |
 |---------|------|------------|
@@ -649,3 +799,6 @@ python tests/test_trident_integration.py --test_dataset
 | `single/main.py` | 修正 | csv_path, label_dict対応 |
 | `single/configs_custom/config_custom_template.yaml` | 新規作成 | テンプレート |
 | `single/dataset_csv/sample_custom.csv` | 新規作成 | CSVサンプル |
+| `generate_heatmap.py` | 修正 | 各クラス確率対応、coord_scale追加 |
+| `single/eval.py` | 修正 | カスタムタスク対応 |
+| `single/utils/eval_utils.py` | 修正 | 各クラス確率出力、ラベルなしデータ対応 |

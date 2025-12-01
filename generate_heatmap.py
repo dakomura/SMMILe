@@ -16,7 +16,17 @@ import argparse
 colormap = colormaps.get_cmap('jet')  # Use the 'jet' colormap for a heatmap effect
 norm = Normalize(vmin=0, vmax=1)  # Normalize prob values to the range [0, 1]
 
-def create_prediction_overlay(svs_file, df_result, thumbnail_size=(1024, 1024)):
+def create_prediction_overlay(svs_file, df_result, prob_column='prob', thumbnail_size=(1024, 1024), coord_scale=1.0):
+    """
+    SVSファイルに予測確率のオーバーレイを作成
+    
+    Args:
+        svs_file: SVSファイルのパス
+        df_result: 予測結果のDataFrame
+        prob_column: 使用する確率の列名（'prob', 'prob_0', 'prob_1'など）
+        thumbnail_size: サムネイルのサイズ
+        coord_scale: 座標のスケーリングファクター（CSVの座標をLevel 0に変換するため）
+    """
     # Step 1: Load the SVS file
     slide = openslide.OpenSlide(svs_file)
     
@@ -37,22 +47,21 @@ def create_prediction_overlay(svs_file, df_result, thumbnail_size=(1024, 1024)):
         # Parse the x, y coordinates from the filename
         filename = row['filename']
         coords = filename.split('/')[-1].split('_')
-        x, y = int(coords[0]), int(coords[1])
-        patch_size = int(coords[2].split('.')[0])
+        # Apply coordinate scaling to convert to Level 0 coordinates
+        x, y = int(int(coords[0]) * coord_scale), int(int(coords[1]) * coord_scale)
+        patch_size = int(int(coords[2].split('.')[0]) * coord_scale)
     
         # Downscale coordinates to match thumbnail size
         x_downscaled = int(x / downscale_factor)
         y_downscaled = int(y / downscale_factor)
         patch_size_downscaled = int(patch_size / downscale_factor)
     
-        # Set color based on prediction label
-        if 0 <= row['prob'] <= 1:  # Ensure prob is within [0, 1]
-            # intensity = int(row['prob'] * 255)  # Scale prob to 0-255 for RGB values
-            # color = (255, 0, 0, intensity)  # Red with opacity based on probability
-            rgba = colormap(norm(row['prob']))  # Map prob to colormap
+        # Set color based on prediction probability
+        prob_value = row[prob_column]
+        if pd.notna(prob_value) and 0 <= prob_value <= 1:
+            rgba = colormap(norm(prob_value))  # Map prob to colormap
             r, g, b, a = [int(c * 255) for c in rgba]  # Convert to 0-255 range
             color = (r, g, b, 150)
-            # color = tuple(int(c * 255) for c in rgba[:4])  # Convert RGBA to 0-255 range
         else:
             color = (0, 0, 0, 0)  # Fully transparent for invalid prob values
     
@@ -63,25 +72,58 @@ def create_prediction_overlay(svs_file, df_result, thumbnail_size=(1024, 1024)):
     combined = Image.alpha_composite(thumbnail, mask)
     return thumbnail, combined
 
-def process_wsi(svs_file, df_results, output_dir, suffix, thumbnail_size):
+def process_wsi(svs_file, df_results, output_dir, suffix, thumbnail_size, class_labels=None, coord_scale=1.0):
+    """
+    WSIを処理して各クラスのheatmapを生成
+    
+    Args:
+        svs_file: SVSファイルのパス
+        df_results: 予測結果のDataFrame
+        output_dir: 出力ディレクトリ
+        suffix: ファイル名のサフィックス
+        thumbnail_size: サムネイルのサイズ
+        class_labels: クラスラベルの辞書 {0: 'class0_name', 1: 'class1_name', ...}
+        coord_scale: 座標のスケーリングファクター（CSVの座標をLevel 0に変換するため）
+    """
     svs_name = os.path.splitext(os.path.basename(svs_file))[0]
     df_results_sub = df_results[df_results['svs_name'] == svs_name]
+    
+    if df_results_sub.empty:
+        return None  # Skip if no results for this WSI
+    
+    # 各クラスの確率列を検出
+    prob_columns = [col for col in df_results_sub.columns if col.startswith('prob_')]
+    
+    if not prob_columns:
+        # 従来の単一prob列のみの場合
+        prob_columns = ['prob']
+    
+    processed = []
+    for prob_col in prob_columns:
+        if prob_col == 'prob':
+            class_suffix = 'pred'
+            class_name = 'prediction'
+        else:
+            class_idx = int(prob_col.split('_')[1])
+            if class_labels and class_idx in class_labels:
+                class_name = class_labels[class_idx]
+            else:
+                class_name = f'class{class_idx}'
+            class_suffix = class_name
+        
+        output_image_path = os.path.join(output_dir, '{}_{}_{}_{}.png'.format(
+            svs_name, suffix, class_suffix, 'heatmap'))
+        
+        try:
+            thumbnail, overlay = create_prediction_overlay(
+                svs_file, df_results_sub, prob_column=prob_col, thumbnail_size=thumbnail_size, coord_scale=coord_scale)
+            overlay.save(output_image_path, "PNG")
+            processed.append(class_name)
+        except Exception as e:
+            print(f"Error processing {svs_name} for {class_name}: {e}")
+    
+    return svs_name if processed else None
 
-    data = df_results_sub[df_results_sub['label'] != -1]
-    true_labels = data['label']
-    probabilities = data['prob']
-    predictions = data['prob']>0.5
-    f1 = f1_score(true_labels, predictions, zero_division=1)*100
-    
-    if df_results_sub['label'].sum() == 0:
-        return  # Skip if there are no relevant labels
-    
-    if not df_results_sub.empty:
-        output_image_path = os.path.join(output_dir, '{}_{}_{}.png'.format(svs_name, suffix, '{:.2f}'.format(f1)))
-        thumbnail, overlay = create_prediction_overlay(svs_file, df_results_sub, thumbnail_size)
-        overlay.save(output_image_path, "PNG")
-        return svs_name  # Return the processed svs_name for tracking
-    
 def main(args):
     thumbnail_size = (1024, 1024)
     wsi_dir = args.wsi_dir
@@ -90,18 +132,43 @@ def main(args):
     results_dir = args.results_dir
     output_dir = os.path.join(results_dir, 'visual')
     print(f"Results Directory: {results_dir}")
+    print(f"Output Directory: {output_dir}")
+    print(f"Found {len(wsi_list)} WSI files")
 
     results_list = glob(os.path.join(results_dir, '*_inst.csv'))
+    print(f"Found {len(results_list)} result CSV files")
+    
+    if len(results_list) == 0:
+        print("Error: No *_inst.csv files found in results directory!")
+        return
     
     os.makedirs(output_dir, exist_ok=True)
+    
+    # クラスラベルの解析
+    class_labels = None
+    if args.class_labels:
+        class_labels = {}
+        for label_pair in args.class_labels.split(','):
+            idx, name = label_pair.split(':')
+            class_labels[int(idx)] = name
+        print(f"Class labels: {class_labels}")
     
     # Read and process result CSV files
     df_results = []
     for result_path in results_list:
-        df_results.append(pd.read_csv(result_path))
+        df = pd.read_csv(result_path)
+        print(f"Loaded {result_path}: {len(df)} rows")
+        df_results.append(df)
     df_results = pd.concat(df_results, axis=0)
-    df_results = df_results.groupby('filename', as_index=False).mean()
+    
+    # 数値列のみで平均を取る
+    numeric_cols = df_results.select_dtypes(include=[np.number]).columns.tolist()
+    agg_dict = {col: 'mean' for col in numeric_cols}
+    df_results = df_results.groupby('filename', as_index=False).agg(agg_dict)
     df_results['svs_name'] = df_results['filename'].map(lambda x: x.split('/')[0])
+    
+    print(f"Total unique patches: {len(df_results)}")
+    print(f"Available columns: {df_results.columns.tolist()}")
     
     num_workers = min(args.num_workers, len(wsi_list))  # Adjust thread count based on CPU cores or user input
         
@@ -114,26 +181,34 @@ def main(args):
                 df_results,
                 output_dir,
                 args.model_name,
-                thumbnail_size
+                thumbnail_size,
+                class_labels,
+                args.coord_scale
             ): i for i in range(len(wsi_list))
         }
         
         # Track progress with tqdm
+        processed_count = 0
         for future in tqdm(as_completed(futures), total=len(futures)):
             try:
                 result = future.result()
-                # Uncomment to log processed results
-                # if result:
-                #     print(f"Processed: {result}")
+                if result:
+                    processed_count += 1
             except Exception as e:
                 print(f"Error processing file: {e}")
+        
+        print(f"Successfully processed {processed_count} WSIs")
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Process WSIs and generate visual overlays.")
+    parser = argparse.ArgumentParser(description="Process WSIs and generate visual overlays for each class.")
     parser.add_argument('--model_name', type=str, required=True, help="Name of the model (e.g., smmile).")
-    parser.add_argument('--wsi_dir', type=str, required=True, help="Directory containing the WSI files.")
+    parser.add_argument('--wsi_dir', type=str, required=True, help="Directory pattern for WSI files (e.g., '/path/to/wsi/*.svs').")
     parser.add_argument('--results_dir', type=str, required=True, help="Directory containing the result CSV files.")
     parser.add_argument('--num_workers', type=int, default=8, help="Number of workers for parallel processing.")
+    parser.add_argument('--class_labels', type=str, default=None, 
+                        help="Class labels in format '0:adenocarcinoma,1:squamous_cell_carcinoma'")
+    parser.add_argument('--coord_scale', type=float, default=1.0,
+                        help="Coordinate scaling factor to convert CSV coordinates to Level 0 (e.g., 2.0 if coords are at half scale)")
     
     args = parser.parse_args()
     main(args)

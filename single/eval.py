@@ -37,7 +37,7 @@ parser.add_argument('--fold', type=int, default=-1, help='single fold to evaluat
 parser.add_argument('--micro_average', action='store_true', default=False, 
                     help='use micro_average instead of macro_avearge for multiclass AUC')
 parser.add_argument('--split', type=str, choices=['train', 'val', 'test', 'all'], default='test')
-parser.add_argument('--task', type=str, choices=['renal_subtype_yfy','camelyon','renal_subtype','lung_subtype','ovarian_subtype'])
+parser.add_argument('--task', type=str, choices=['renal_subtype_yfy','camelyon','renal_subtype','lung_subtype','ovarian_subtype','esca_subtype'])
 parser.add_argument('--fea_dim', type=int, default=1024,
                      help='the original dimensions of patch embedding')
 parser.add_argument('--n_classes', type=int, default=3,
@@ -205,6 +205,23 @@ elif args.task == 'ovarian_subtype':
                                 seed = 10, 
                                 print_info = True,
                                 label_dict = {'HGSC':0, 'EC':1, 'CC':2, 'LGSC':3, 'MC':4},
+                                patient_strat= False,
+                                ignore=[])
+
+elif args.task == 'esca_subtype':
+    args.n_classes=2
+    args.patch_size=2048
+    if args.model_type in ['smmile']:
+            dataset = NIC_MIL_SP_Dataset(csv_path = '/home/is1kd/work/TITAN/TCGA/SMMILe/ESCA/esca_subtyping.csv',
+                                data_dir = os.path.join(args.data_root_dir),
+                                data_mag = '1_512',
+                                sp_dir = os.path.join(args.data_sp_dir),
+                                task = args.task,
+                                size = 2048,
+                                shuffle = False, 
+                                seed = 10, 
+                                print_info = True,
+                                label_dict = {'adenocarcinoma':0, 'squamous_cell_carcinoma':1},
                                 patient_strat= False,
                                 ignore=[])
             
